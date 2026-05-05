@@ -1,0 +1,40 @@
+# Environment variables — NEVER commit real keys
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+sentinel_output.json
+
+# Word doc (binary — not useful to track in git)
+*.docx
+
+# Node (for generate_report.js)
+node_modules/
