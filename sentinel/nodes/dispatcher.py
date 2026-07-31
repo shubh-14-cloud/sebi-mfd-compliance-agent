@@ -14,15 +14,16 @@ Each Action Card contains:
 """
 import json
 import os
-from groq import Groq
+from google import genai
+from google.genai import types
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, List
 from sentinel.state import GraphState
 
 load_dotenv(Path(__file__).parents[2] / ".env", override=True)
-_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-_MODEL = "llama-3.3-70b-versatile"
+_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_MODEL = "gemini-2.5-flash"
 
 _MSG_SYSTEM = """\
 You are a trusted financial advisor drafting a client communication on behalf of a SEBI-registered
@@ -76,15 +77,15 @@ def _draft_batch(batch: List[Dict], vanilla_summary: str, circular_id: str) -> D
     )
 
     try:
-        response = _client.chat.completions.create(
+        response = _client.models.generate_content(
             model=_MODEL,
-            messages=[
-                {"role": "system", "content": _MSG_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=_BATCH_SIZE * 400,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=_MSG_SYSTEM,
+                temperature=0.0
+            )
         )
-        raw = response.choices[0].message.content.strip()
+        raw = response.text.strip()
         # Strip markdown fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]

@@ -14,6 +14,17 @@ The script then simulates MFD review and resumes with an approval decision.
 """
 import json
 import os
+import urllib.request
+import xml.etree.ElementTree as ET
+import io
+from urllib.parse import urlparse, parse_qs
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    from PyPDF2 import PdfReader
+    HAS_PDF_DEPS = True
+except ImportError:
+    HAS_PDF_DEPS = False
 from pathlib import Path
 from dotenv import load_dotenv
 from sentinel.graph import build_graph
@@ -63,6 +74,65 @@ For and on behalf of SEBI
 (Madhabi Puri Buch)
 Chairperson, SEBI
 """
+
+
+def fetch_live_circular(rss_url: str = "https://www.sebi.gov.in/sebirss.xml") -> str:
+    """Fetches the latest circular from SEBI RSS feed and extracts PDF text if possible."""
+    print(f"\n[Live Fetch] Fetching latest circular from {rss_url} ...")
+    try:
+        req = urllib.request.Request(
+            rss_url, 
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+            
+        root = ET.fromstring(xml_data)
+        item = root.find('.//item')
+        
+        if item is not None:
+            title = item.findtext('title', 'No Title')
+            desc = item.findtext('description', 'No Description')
+            link = item.findtext('link', 'No Link')
+            pub_date = item.findtext('pubDate', 'No Date')
+            
+            full_text = ""
+            if HAS_PDF_DEPS and link != 'No Link':
+                try:
+                    html_resp = requests.get(link, headers={'User-Agent': 'Mozilla/5.0'})
+                    soup = BeautifulSoup(html_resp.content, 'html.parser')
+                    iframe = soup.find('iframe')
+                    if iframe and 'src' in iframe.attrs:
+                        iframe_src = iframe['src']
+                        parsed_src = urlparse(iframe_src)
+                        qs = parse_qs(parsed_src.query)
+                        if 'file' in qs:
+                            pdf_url = qs['file'][0]
+                            print(f"[Live Fetch] Downloading PDF from {pdf_url} ...")
+                            pdf_resp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0'})
+                            
+                            reader = PdfReader(io.BytesIO(pdf_resp.content))
+                            pdf_text = []
+                            for page in reader.pages:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    pdf_text.append(page_text)
+                            
+                            if pdf_text:
+                                full_text = "\n".join(pdf_text)
+                except Exception as ex:
+                    print(f"[Live Fetch] Failed to extract PDF: {ex}")
+            
+            if full_text:
+                print(f"[Live Fetch] Success! Extracted PDF document.")
+                return f"SECURITIES AND EXCHANGE BOARD OF INDIA\n\nDate: {pub_date}\nSubject: {title}\n\n{full_text}\n\nSource: {link}\n"
+            else:
+                print(f"[Live Fetch] Success! Found metadata (PDF extraction failed/unavailable).")
+                return f"SECURITIES AND EXCHANGE BOARD OF INDIA\n\nDate: {pub_date}\nSubject: {title}\n\n{desc}\n\nSource: {link}\n"
+    except Exception as e:
+        print(f"[Live Fetch] Error fetching live circular: {e}\nFalling back to SAMPLE_CIRCULAR...")
+        
+    return SAMPLE_CIRCULAR
 
 
 def display_action_cards(action_cards: list, max_clients: int = 5) -> None:
@@ -115,7 +185,7 @@ def main():
     print()
 
     initial_state = {
-        "raw_circular_text": SAMPLE_CIRCULAR,
+        "raw_circular_text": fetch_live_circular(),
         "circular_id": "",
         "vanilla_summary": "",
         "impact_triggers": [],

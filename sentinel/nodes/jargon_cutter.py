@@ -11,13 +11,14 @@ import json
 import os
 import re
 from pathlib import Path
-from groq import Groq
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from sentinel.state import GraphState
 
 load_dotenv(Path(__file__).parents[2] / ".env", override=True)
-_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-_MODEL = "llama-3.3-70b-versatile"
+_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+_MODEL = "gemini-2.5-flash"
 
 _SYSTEM_PROMPT = """\
 You are a senior regulatory compliance analyst specialising in Indian mutual fund regulations (SEBI/AMFI).
@@ -121,15 +122,15 @@ def jargon_cutter_node(state: GraphState) -> dict:
     )
 
     try:
-        response = _client.chat.completions.create(
+        response = _client.models.generate_content(
             model=_MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2048,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_PROMPT,
+                temperature=0.0
+            )
         )
-        raw_output = response.choices[0].message.content
+        raw_output = response.text
     except Exception as exc:
         errors.append(f"jargon_cutter LLM error: {exc}")
         return {
