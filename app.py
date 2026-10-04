@@ -1,12 +1,12 @@
 import streamlit as st
 import time
-from sentinel.graph import build_graph
+from sentinel.graph import build_graph, resume_review
 from main import fetch_live_circular
 
 st.set_page_config(page_title="Regulatory Sentinel", layout="wide")
 
 st.title("🛡️ Agentic Regulatory Sentinel")
-st.markdown("Tier-1 MFD Compliance Automation — Powered by LangGraph + Claude")
+st.markdown("Tier-1 MFD Compliance Automation — Powered by LangGraph + Gemini")
 
 # Initialize session state variables
 if "circular_text" not in st.session_state:
@@ -43,13 +43,7 @@ with col2:
 # 2. Process Section
 st.header("2. AI Analysis Pipeline")
 if st.button("Run Compliance Pipeline", disabled=not st.session_state.circular_text):
-    with st.spinner("Processing through Module 1 → Jargon-Cutter..."):
-        time.sleep(1)
-    with st.spinner("Processing through Module 2 → Book Auditor..."):
-        time.sleep(1)
-    with st.spinner("Processing through Module 3 → Benefit Engine..."):
-        time.sleep(1)
-    with st.spinner("Processing through Module 4 → Dispatcher..."):
+    with st.spinner("Running Modules 1–4 (Jargon-Cutter → Book Auditor → Benefit Engine → Dispatcher)..."):
         config = {"configurable": {"thread_id": st.session_state.run_id}}
         
         initial_state = {
@@ -58,9 +52,10 @@ if st.button("Run Compliance Pipeline", disabled=not st.session_state.circular_t
             "vanilla_summary": "",
             "impact_triggers": [],
             "affected_clients": [],
-            "mfd_commission_delta": 0.0,
+            "mfd_commission_delta": {},
             "action_cards": [],
             "human_approval_status": False,
+            "reviewer_feedback": "",
             "processing_errors": [],
         }
         
@@ -105,21 +100,33 @@ if st.session_state.snapshot:
                     st.divider()
 
     if not st.session_state.approval_done:
+        feedback = st.text_input("Feedback for redraft (used if you reject)", key="reviewer_feedback_input")
         col_app, col_rej = st.columns([1, 1])
         with col_app:
             if st.button("✅ Approve & Dispatch", type="primary"):
                 config = {"configurable": {"thread_id": st.session_state.run_id}}
+                # Carry the MFD's edits to the drafts into the graph state
+                edits = {
+                    c["client_id"]: st.session_state.get(f"msg_{c['client_id']}", c.get("personalized_message", ""))
+                    for card in action_cards for c in card.get("clients", [])
+                }
                 with st.spinner("Resuming graph with approval..."):
-                    st.session_state.final_state = st.session_state.graph_app.invoke({"human_approval_status": True}, config)
+                    st.session_state.final_state = resume_review(
+                        st.session_state.graph_app, config, approved=True, edited_messages=edits
+                    )
                     st.session_state.approval_done = True
                 st.rerun()
-                
+
         with col_rej:
             if st.button("❌ Reject & Revise"):
                 config = {"configurable": {"thread_id": st.session_state.run_id}}
-                with st.spinner("Resuming graph with rejection..."):
-                    st.session_state.final_state = st.session_state.graph_app.invoke({"human_approval_status": False}, config)
-                    st.session_state.approval_done = True
+                with st.spinner("Redrafting messages with your feedback..."):
+                    # Graph loops back to the Dispatcher and pauses at human_review again
+                    st.session_state.snapshot = resume_review(
+                        st.session_state.graph_app, config, approved=False, feedback=feedback
+                    )
+                    for k in [k for k in st.session_state if k.startswith("msg_")]:
+                        del st.session_state[k]  # show the fresh drafts
                 st.rerun()
 
     if st.session_state.approval_done and st.session_state.final_state:
@@ -128,5 +135,3 @@ if st.session_state.snapshot:
             cards = st.session_state.final_state.get("action_cards", [])
             total = len(cards[0].get("clients", [])) if cards else 0
             st.success(f"🎉 Pipeline complete! {total} personalised client message(s) approved and ready to dispatch.")
-        else:
-            st.warning("↺ Action Cards sent back to Dispatcher for revision.")

@@ -11,19 +11,14 @@ Each Action Card contains:
   2. The list of specifically impacted clients.
   3. The estimated commission impact (informational).
   4. A pre-drafted, personalised message for each impacted client.
-"""
-import json
-import os
-from google import genai
-from google.genai import types
-from pathlib import Path
-from dotenv import load_dotenv
-from typing import Dict, List
-from sentinel.state import GraphState
 
-load_dotenv(Path(__file__).parents[2] / ".env", override=True)
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-_MODEL = "gemini-2.5-flash"
+If the MFD rejects a draft, their feedback (state["reviewer_feedback"]) is
+included in the prompt when this node re-runs.
+"""
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List
+from sentinel.llm_utils import generate_json
+from sentinel.state import GraphState
 
 _MSG_SYSTEM = """\
 You are a trusted financial advisor drafting a client communication on behalf of a SEBI-registered
@@ -42,7 +37,8 @@ Guidelines:
 """
 
 
-_BATCH_SIZE = 15  # clients per LLM call
+_BATCH_SIZE = 15   # clients per LLM call
+_MAX_WORKERS = 4   # concurrent LLM calls
 
 
 def _build_client_brief(client: Dict) -> str:
@@ -52,7 +48,8 @@ def _build_client_brief(client: Dict) -> str:
     tax_impact = client.get("estimated_tax_impact", {})
     tax_line = tax_impact.get("explanation", "No tax implication from this circular")
     nba = client.get("next_best_action", "")
-    reason = client.get("reasons_for_impact", ["impacted by regulatory change"])[0][:120]
+    reasons = client.get("reasons_for_impact") or ["impacted by regulatory change"]
+    reason = reasons[0][:120]
     return (
         f'ID:{client["client_id"]} | Name:{client["client_name"]} | '
         f'Funds:{funds} | TaxNote:{tax_line[:80]} | '
@@ -60,7 +57,7 @@ def _build_client_brief(client: Dict) -> str:
     )
 
 
-def _draft_batch(batch: List[Dict], vanilla_summary: str, circular_id: str) -> Dict[str, str]:
+def _draft_batch(batch: List[Dict], vanilla_summary: str, circular_id: str, feedback: str = "") -> Dict[str, str]:
     """
     Draft messages for a batch of clients in a single LLM call.
     Returns {client_id: message}.
@@ -68,31 +65,27 @@ def _draft_batch(batch: List[Dict], vanilla_summary: str, circular_id: str) -> D
     briefs = "\n".join(f"{i+1}. {_build_client_brief(c)}" for i, c in enumerate(batch))
     ids = [c["client_id"] for c in batch]
 
+    feedback_block = (
+        f"\nThe MFD rejected the previous draft with this feedback — address it:\n{feedback}\n"
+        if feedback.strip() else ""
+    )
     prompt = (
         f"Circular: {circular_id}\n"
-        f"Regulatory Change: {vanilla_summary}\n\n"
+        f"Regulatory Change: {vanilla_summary}\n"
+        f"{feedback_block}\n"
         f"Draft a personalised 3-paragraph client email for EACH of the {len(batch)} clients below.\n"
         f"Return ONLY a JSON object: {{\"CLIENT_ID\": \"message text\", ...}} — no other text.\n\n"
         f"Clients:\n{briefs}"
     )
 
+    def _validate(data):
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object mapping client_id -> message")
+        return data
+
     try:
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_MSG_SYSTEM,
-                temperature=0.0
-            )
-        )
-        raw = response.text.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        messages = json.loads(raw.strip())
-        return {k: v for k, v in messages.items() if k in ids}
+        messages = generate_json(_MSG_SYSTEM, prompt, validate=_validate)
+        return {k: v for k, v in messages.items() if k in ids and isinstance(v, str)}
     except Exception as exc:
         # Fallback: template message for every client in the batch
         return {
@@ -110,23 +103,26 @@ def dispatcher_node(state: GraphState) -> dict:
     """
     LangGraph node: stage_dispatch
     Reads all state → writes action_cards with personalised messages.
-    Batches clients into groups of {_BATCH_SIZE} per LLM call.
+    Batches clients into groups of {_BATCH_SIZE} per LLM call, run concurrently.
     """
     clients: List[Dict] = state.get("affected_clients", [])
     vanilla_summary: str = state.get("vanilla_summary", "")
     circular_id: str = state.get("circular_id", "UNKNOWN")
     commission_info: Dict = state.get("mfd_commission_delta", {})
+    feedback: str = state.get("reviewer_feedback", "")
     errors: List[str] = list(state.get("processing_errors", []))
 
     if not clients:
         return {"action_cards": [], "processing_errors": errors}
 
-    # Build message map via batched LLM calls
-    message_map: Dict[str, str] = {}
     batches = [clients[i:i + _BATCH_SIZE] for i in range(0, len(clients), _BATCH_SIZE)]
-    for idx, batch in enumerate(batches):
-        print(f"[Dispatcher] Drafting messages — batch {idx + 1}/{len(batches)} ({len(batch)} clients)")
-        message_map.update(_draft_batch(batch, vanilla_summary, circular_id))
+    print(f"[Dispatcher] Drafting messages — {len(batches)} batch(es) of up to {_BATCH_SIZE} clients"
+          + (" (with MFD feedback)" if feedback.strip() else ""))
+
+    message_map: Dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        for result in pool.map(lambda b: _draft_batch(b, vanilla_summary, circular_id, feedback), batches):
+            message_map.update(result)
 
     client_cards = []
     for client in clients:

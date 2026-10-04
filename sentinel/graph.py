@@ -35,11 +35,11 @@ def human_review_node(state: GraphState) -> dict:
     `interrupt_before=["human_review"]`, so LangGraph halts execution here
     and returns control to the caller.
 
-    To resume, invoke the graph again on the same thread_id with:
-        {"human_approval_status": True}   # approved
-        {"human_approval_status": False}  # revision needed → loops back to Dispatcher
+    To resume, call resume_review() (below) on the same thread_id:
+        approved=True   → END
+        approved=False  → loops back to Dispatcher (optionally with feedback)
     """
-    # When resumed, human_approval_status is already in state (set by the caller).
+    # When resumed, human_approval_status is already in state (set via update_state).
     # Nothing to compute here — just pass through.
     return {}
 
@@ -75,7 +75,7 @@ def build_graph(checkpointer=None):
         # … MFD reviews snapshot["action_cards"] …
 
         # Phase 2: resume with approval decision
-        final = app.invoke({"human_approval_status": True}, config)
+        final = resume_review(app, config, approved=True)
     """
     graph = StateGraph(GraphState)
 
@@ -109,3 +109,40 @@ def build_graph(checkpointer=None):
         checkpointer=cp,
         interrupt_before=["human_review"],
     )
+
+
+# ── Resume helper ─────────────────────────────────────────────────────────────
+
+def resume_review(
+    app,
+    config: dict,
+    approved: bool,
+    feedback: str = "",
+    edited_messages: dict | None = None,
+) -> dict:
+    """
+    Resume a graph paused at human_review.
+
+    NOTE: invoking with a dict on an interrupted thread would start a NEW run from
+    START (re-running every LLM node). The correct resume is: write the decision
+    into the checkpoint with update_state(), then invoke(None, config).
+
+    Args:
+        approved:        True → END; False → back to the Dispatcher.
+        feedback:        MFD notes passed to the Dispatcher on rejection.
+        edited_messages: {client_id: text} edits the MFD made to drafts.
+    """
+    update: dict = {"human_approval_status": approved, "reviewer_feedback": feedback}
+
+    if edited_messages:
+        values = app.get_state(config).values
+        clients = [
+            {**c, "personalized_message": edited_messages.get(c["client_id"], c.get("personalized_message", ""))}
+            for c in values.get("affected_clients", [])
+        ]
+        cards = [{**card, "clients": clients} for card in values.get("action_cards", [])]
+        update["affected_clients"] = clients
+        update["action_cards"] = cards
+
+    app.update_state(config, update)
+    return app.invoke(None, config)

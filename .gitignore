@@ -38,3 +38,7 @@ sentinel_output.json
 
 # Node (for generate_report.js)
 node_modules/
+
+# OS / tooling noise
+desktop.ini
+.pytest_cache/

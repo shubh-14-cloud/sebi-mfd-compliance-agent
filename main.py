@@ -27,7 +27,7 @@ except ImportError:
     HAS_PDF_DEPS = False
 from pathlib import Path
 from dotenv import load_dotenv
-from sentinel.graph import build_graph
+from sentinel.graph import build_graph, resume_review
 
 # Load .env from the project root regardless of working directory
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -169,7 +169,7 @@ def display_action_cards(action_cards: list, max_clients: int = 5) -> None:
 def main():
     print("=" * 70)
     print("  AGENTIC REGULATORY SENTINEL v1.0")
-    print("  Tier-1 MFD Compliance Automation — Powered by LangGraph + Claude")
+    print("  Tier-1 MFD Compliance Automation — Powered by LangGraph + Gemini")
     print("=" * 70)
 
     # ── Build graph ──────────────────────────────────────────────────────────
@@ -190,9 +190,10 @@ def main():
         "vanilla_summary": "",
         "impact_triggers": [],
         "affected_clients": [],
-        "mfd_commission_delta": 0.0,
+        "mfd_commission_delta": {},
         "action_cards": [],
         "human_approval_status": False,
+        "reviewer_feedback": "",
         "processing_errors": [],
     }
 
@@ -208,23 +209,26 @@ def main():
     if errors:
         print(f"\n⚠ Processing errors: {errors}")
 
-    # ── Simulate MFD decision ─────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("[Human Review] Simulating MFD approval...")
-    decision = input("  Approve and dispatch messages? (y/n): ").strip().lower()
-    approved = decision == "y"
-    print(f"  MFD decision: {'✓ APPROVED' if approved else '✗ REVISION NEEDED'}")
+    # ── MFD decision loop: reject → redraft with feedback → review again ──────
+    final_state = snapshot
+    while True:
+        print("\n" + "=" * 70)
+        decision = input("[Human Review] Approve and dispatch messages? (y/n): ").strip().lower()
+        approved = decision == "y"
+        print(f"  MFD decision: {'✓ APPROVED' if approved else '✗ REVISION NEEDED'}")
 
-    # ── Phase 2: Resume graph with approval decision ─────────────────────────
-    print("\n[Phase 2] Resuming graph with approval decision...")
-    final_state = app.invoke({"human_approval_status": approved}, config)
+        if approved:
+            print("\n[Phase 2] Resuming graph with approval...")
+            final_state = resume_review(app, config, approved=True)
+            cards = final_state.get("action_cards", [])
+            total = len(cards[0].get("clients", [])) if cards else 0
+            print(f"\n✓ Pipeline complete. {total} personalised client message(s) approved and ready to dispatch.")
+            break
 
-    if approved:
-        cards = final_state.get("action_cards", [])
-        total = len(cards[0].get("clients", [])) if cards else 0
-        print(f"\n✓ Pipeline complete. {total} personalised client message(s) approved and ready to dispatch.")
-    else:
-        print("\n↺ Action Cards sent back to Dispatcher for revision.")
+        feedback = input("  What should change? (feedback for the redraft): ").strip()
+        print("\n[Phase 2] Sending back to Dispatcher with your feedback...")
+        final_state = resume_review(app, config, approved=False, feedback=feedback)
+        display_action_cards(final_state.get("action_cards", []), max_clients=3)
 
     # ── Optional: dump full state to JSON ────────────────────────────────────
     dump_path = "sentinel_output.json"

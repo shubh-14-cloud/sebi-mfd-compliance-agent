@@ -15,7 +15,7 @@ flowchart TD
     end
 
     subgraph M3["Module 3 · Benefit & Reality Engine"]
-        BE["calculate_benefits\nLTCG/STCG Tax Calc\nCommission Delta"]
+        BE["calculate_benefits\nCircular-driven tax flags\nCommission note"]
     end
 
     subgraph M4["Module 4 · Ready-to-Act Dispatcher"]
@@ -39,11 +39,12 @@ flowchart TD
         s2["vanilla_summary: str"]
         s3["impact_triggers: List[dict]"]
         s4["affected_clients: List[dict]"]
-        s5["mfd_commission_delta: float"]
+        s5["mfd_commission_delta: dict"]
         s6["action_cards: List[dict]"]
         s7["human_approval_status: bool"]
         s8["circular_id: str"]
         s9["processing_errors: List[str]"]
+        s10["reviewer_feedback: str"]
     end
 ```
 
@@ -79,7 +80,7 @@ SEBI/AMFI Circular PDF Text
         │              └─ reason_for_impact (personalized)
         │
         ▼
-[Benefit Engine] ──► Per client: LTCG/STCG tax impact
+[Benefit Engine] ──► Per client: tax-implication flag + explanation
         │                         next_best_action
         │            MFD-level: commission_delta estimate
         │

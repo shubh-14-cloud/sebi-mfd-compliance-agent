@@ -192,7 +192,7 @@ children.push(
     spacing: { before: 200, after: 120 },
   }),
   new Paragraph({
-    children: [new TextRun({ text: "LangGraph  \u00B7  Python  \u00B7  Groq (Llama 3.3 70B)  \u00B7  Agentic AI", font: "Arial", size: 22, color: BLUE })],
+    children: [new TextRun({ text: "LangGraph  \u00B7  Python  \u00B7  Gemini 2.5 Flash  \u00B7  Agentic AI", font: "Arial", size: 22, color: BLUE })],
     alignment: AlignmentType.CENTER,
     spacing: { before: 0, after: 600 },
   }),
@@ -337,7 +337,7 @@ children.push(
     ["Layer", "Technology", "Why This Choice"],
     [
       ["Orchestration", "LangGraph >= 0.2", "Stateful graph with interrupt/resume, MemorySaver checkpoints, and conditional edges — necessary for the HITL loop"],
-      ["Language Model", "Groq / Llama-3.3-70B-Versatile", "Sub-second inference, high context window, strong instruction-following for JSON extraction"],
+      ["Language Model", "Google Gemini 2.5 Flash", "Large context window, native JSON mode, strong instruction-following for extraction"],
       ["Language", "Python 3.13", "Native LangGraph support, strong data science ecosystem"],
       ["State Schema", "TypedDict (typing_extensions)", "Zero-overhead, LangGraph-native, IDE type-safe"],
       ["Env Management", "python-dotenv", "Secure key loading independent of working directory"],
@@ -580,7 +580,7 @@ children.push(
       ["Circular-driven tax analysis", "Hardcoded LTCG/STCG rates", "Hardcoded rates produce incorrect output for circulars that cause no tax events — fundamental correctness issue"],
       ["Rule-based Next Best Action", "LLM call per client", "NBA is deterministic from the trigger analysis already performed; removes 403 redundant API calls"],
       ["Batched dispatcher (15/call)", "1 LLM call per client", "Reduced 403 blocking calls to ~27; no quality loss; JSON batch response with fallback templates"],
-      ["1 Groq call for trigger analysis", "Per-client LLM analysis", "Trigger analysis is circular-level, not client-level; applying it to clients is O(n) pure Python"],
+      ["1 LLM call for trigger analysis", "Per-client LLM analysis", "Trigger analysis is circular-level, not client-level; applying it to clients is O(n) pure Python"],
       ["MemorySaver checkpointer", "External DB / Redis", "In-memory is sufficient for demo; swappable to SqliteSaver or RedisSaver for production"],
       ["TypedDict for GraphState", "Pydantic BaseModel", "LangGraph merges partial dicts natively; TypedDict has zero runtime overhead vs Pydantic validation"],
     ]
@@ -707,10 +707,10 @@ children.push(
   divider(),
   code("Circular/"),
   code("  main.py                      # Entry point, HITL loop, output display"),
-  code("  requirements.txt             # langgraph, groq, pydantic, python-dotenv"),
+  code("  requirements.txt             # langgraph, google-genai, pydantic, python-dotenv"),
   code("  architecture.md              # Mermaid.js state machine diagram"),
   code("  sentinel_output.json         # Full pipeline output dump"),
-  code("  .env                         # GROQ_API_KEY (not committed)"),
+  code("  .env                         # GEMINI_API_KEY (not committed)"),
   code(""),
   code("  sentinel/"),
   code("    state.py                   # GraphState TypedDict schema"),
@@ -733,7 +733,7 @@ children.push(
   // Final callout
   new Paragraph({ children: [new TextRun("")], spacing: { before: 1200 } }),
   new Paragraph({
-    children: [new TextRun({ text: "Built end-to-end with LangGraph + Groq + Python", font: "Arial", size: 24, color: BLUE, italics: true })],
+    children: [new TextRun({ text: "Built end-to-end with LangGraph + Gemini + Python", font: "Arial", size: 24, color: BLUE, italics: true })],
     alignment: AlignmentType.CENTER,
     spacing: { before: 0, after: 80 },
   }),
@@ -822,7 +822,7 @@ const doc = new Document({
   }],
 });
 
-const OUT = "C:\\Users\\shubh\\OneDrive\\Desktop\\Circular\\Agentic_Regulatory_Sentinel_Report.docx";
+const OUT = require("path").join(__dirname, "Agentic_Regulatory_Sentinel_Report.docx");
 Packer.toBuffer(doc).then(buf => {
   fs.writeFileSync(OUT, buf);
   console.log("Done:", OUT);

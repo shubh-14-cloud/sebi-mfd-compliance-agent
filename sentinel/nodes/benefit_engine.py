@@ -13,17 +13,9 @@ Flow:
                          LLM calls regardless of client count.
 """
 import json
-import os
-from google import genai
-from google.genai import types
-from pathlib import Path
-from dotenv import load_dotenv
 from typing import Dict, List
+from sentinel.llm_utils import generate_json
 from sentinel.state import GraphState
-
-load_dotenv(Path(__file__).parents[2] / ".env", override=True)
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-_MODEL = "gemini-2.5-flash"
 
 _ANALYSIS_SYSTEM = """\
 You are a fiduciary regulatory compliance analyst specialising in Indian mutual fund regulations (SEBI/AMFI).
@@ -80,24 +72,15 @@ For EACH trigger, return a JSON object with this exact structure:
   }}
 }}
 
-Return ONLY valid JSON. No markdown fences, no extra text."""
+Return ONLY a valid JSON object."""
+
+    def _validate(data):
+        if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+            raise ValueError("expected a JSON object mapping mandate_id -> analysis object")
+        return data
 
     try:
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_ANALYSIS_SYSTEM,
-                temperature=0.0
-            )
-        )
-        raw = response.text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
-
+        return generate_json(_ANALYSIS_SYSTEM, prompt, validate=_validate)
     except Exception as exc:
         return {
             t.get("mandate_id", f"T{i}"): {
@@ -202,6 +185,9 @@ def benefit_engine_node(state: GraphState) -> dict:
 
     print(f"\n[Benefit Engine] Analyzing {len(triggers)} trigger(s) against the circular...")
     trigger_analysis = _analyze_circular_for_impacts(triggers, vanilla_summary)
+
+    if any(str(a.get("tax_explanation", "")).startswith("Analysis failed") for a in trigger_analysis.values()):
+        errors.append("benefit_engine: LLM analysis failed — tax/commission fields need manual review")
 
     tax_triggers = [mid for mid, a in trigger_analysis.items() if a.get("has_tax_implication")]
     comm_triggers = [mid for mid, a in trigger_analysis.items() if a.get("has_commission_impact")]

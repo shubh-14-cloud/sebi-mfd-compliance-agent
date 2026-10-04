@@ -36,6 +36,7 @@ class GraphState(TypedDict):
 
     # ── Human-in-the-Loop ────────────────────────────────────────────────────
     human_approval_status: bool      # True = approved, False = needs revision
+    reviewer_feedback: str           # MFD's notes on rejection; fed into the Dispatcher's redraft
 
     # ── Diagnostics ──────────────────────────────────────────────────────────
     processing_errors: List[str]

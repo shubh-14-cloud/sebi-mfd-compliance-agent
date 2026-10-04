@@ -6,32 +6,22 @@ Responsibilities:
   1. Parse dense SEBI/AMFI circular text.
   2. Produce a plain-English "Vanilla Summary" suitable for client-facing communication.
   3. Extract a structured list of "Impact Triggers" (JSON) for downstream processing.
-"""
-import json
-import os
-import re
-from pathlib import Path
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
-from sentinel.state import GraphState
 
-load_dotenv(Path(__file__).parents[2] / ".env", override=True)
-_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-_MODEL = "gemini-2.5-flash"
+The LLM is called in JSON mode and its output is validated with Pydantic, so
+malformed or off-schema responses are retried instead of silently mis-parsed.
+"""
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field
+
+from sentinel.llm_utils import generate_json
+from sentinel.state import GraphState
 
 _SYSTEM_PROMPT = """\
 You are a senior regulatory compliance analyst specialising in Indian mutual fund regulations (SEBI/AMFI).
 
-Your task is to process regulatory circulars and return two things:
-
-1. VANILLA_SUMMARY — 3-5 plain-English sentences a non-expert MFD can read and safely forward to clients.
-   - No legal jargon.
-   - Lead with what is changing and why it matters.
-   - Mention the effective date / deadline if present.
-
-2. IMPACT_TRIGGERS_JSON — A JSON object strictly following this schema:
+Process the regulatory circular and return ONE JSON object with this schema:
 {
+  "vanilla_summary": "3-5 plain-English sentences a non-expert MFD can safely forward to clients. No legal jargon. Lead with what is changing and why it matters. Mention the effective date / deadline if present.",
   "circular_id": "string",
   "circular_date": "YYYY-MM-DD or null",
   "effective_date": "YYYY-MM-DD or null",
@@ -40,7 +30,7 @@ Your task is to process regulatory circulars and return two things:
     {
       "mandate_id": "T001",
       "rule_change": "One-sentence description of the rule change",
-      "fund_categories_impacted": ["Small Cap", "Mid Cap", ...],
+      "fund_categories_impacted": ["Small Cap", "Mid Cap"],
       "asset_classes_impacted": ["Equity", "Debt", "Hybrid", "Gold", "International"],
       "compliance_requirements": ["Action distributor must take"],
       "severity": "LOW | MEDIUM | HIGH | CRITICAL",
@@ -59,42 +49,34 @@ Allowed values for client_filter.type:
   "all"              — all clients
 
 Rules:
-- Output ONLY valid JSON for IMPACT_TRIGGERS_JSON. No markdown fences, no extra text.
+- Output ONLY the JSON object.
 - If a date is absent, use null (not empty string).
 - Be exhaustive — extract every distinct regulatory change as a separate trigger.\
 """
 
 
-def _parse_llm_response(raw: str) -> tuple[str, dict]:
-    """Split LLM output into (vanilla_summary, impact_triggers_dict)."""
-    vanilla_summary = ""
-    impact_triggers = {}
+class ClientFilter(BaseModel):
+    type: Literal["category_holding", "no_nomination", "kyc_pending", "all"] = "all"
+    categories: List[str] = Field(default_factory=list)
 
-    if "VANILLA_SUMMARY" in raw and "IMPACT_TRIGGERS_JSON" in raw:
-        parts = raw.split("IMPACT_TRIGGERS_JSON", 1)
-        vanilla_part = parts[0].replace("VANILLA_SUMMARY", "").strip(" :\n")
-        json_part = parts[1].strip(" :\n")
 
-        vanilla_summary = vanilla_part
+class Trigger(BaseModel):
+    mandate_id: str
+    rule_change: str
+    fund_categories_impacted: List[str] = Field(default_factory=list)
+    asset_classes_impacted: List[str] = Field(default_factory=list)
+    compliance_requirements: List[str] = Field(default_factory=list)
+    severity: str = "MEDIUM"
+    client_filter: ClientFilter = Field(default_factory=ClientFilter)
 
-        # Strip markdown fences if present
-        json_part = re.sub(r"^```(?:json)?\s*", "", json_part, flags=re.MULTILINE)
-        json_part = re.sub(r"\s*```$", "", json_part, flags=re.MULTILINE)
 
-        try:
-            impact_triggers = json.loads(json_part.strip())
-        except json.JSONDecodeError as exc:
-            impact_triggers = {
-                "error": f"JSON parse failed: {exc}",
-                "circular_id": "PARSE_ERROR",
-                "triggers": [],
-            }
-    else:
-        # Fallback: treat entire response as vanilla summary
-        vanilla_summary = raw.strip()
-        impact_triggers = {"circular_id": "UNKNOWN", "triggers": []}
-
-    return vanilla_summary, impact_triggers
+class CircularAnalysis(BaseModel):
+    vanilla_summary: str
+    circular_id: str = "UNKNOWN"
+    circular_date: Optional[str] = None
+    effective_date: Optional[str] = None
+    deadline: Optional[str] = None
+    triggers: List[Trigger] = Field(default_factory=list)
 
 
 def jargon_cutter_node(state: GraphState) -> dict:
@@ -114,25 +96,12 @@ def jargon_cutter_node(state: GraphState) -> dict:
             "processing_errors": errors,
         }
 
-    prompt = (
-        f"Process the following SEBI/AMFI circular.\n\n"
-        f"Circular Text:\n---\n{raw_text}\n---\n\n"
-        f"VANILLA_SUMMARY\n[Write plain-English summary here]\n\n"
-        f"IMPACT_TRIGGERS_JSON\n[Write the JSON here]"
-    )
+    prompt = f"Process the following SEBI/AMFI circular.\n\nCircular Text:\n---\n{raw_text}\n---"
 
     try:
-        response = _client.models.generate_content(
-            model=_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-                temperature=0.0
-            )
-        )
-        raw_output = response.text
+        analysis = generate_json(_SYSTEM_PROMPT, prompt, validate=CircularAnalysis.model_validate)
     except Exception as exc:
-        errors.append(f"jargon_cutter LLM error: {exc}")
+        errors.append(f"jargon_cutter LLM/validation error: {exc}")
         return {
             "vanilla_summary": "",
             "impact_triggers": [],
@@ -140,25 +109,22 @@ def jargon_cutter_node(state: GraphState) -> dict:
             "processing_errors": errors,
         }
 
-    vanilla_summary, triggers_dict = _parse_llm_response(raw_output)
+    # Attach top-level dates to each trigger so downstream nodes don't need the parent object
+    triggers = []
+    for t in analysis.triggers:
+        d = t.model_dump()
+        d["effective_date"] = analysis.effective_date
+        d["deadline"] = analysis.deadline
+        d["circular_date"] = analysis.circular_date
+        triggers.append(d)
 
-    # Normalise: impact_triggers stored as list of trigger dicts
-    raw_triggers = triggers_dict.get("triggers", [])
-    circular_id = triggers_dict.get("circular_id", "UNKNOWN")
-
-    # Attach top-level dates to each trigger for convenience
-    for t in raw_triggers:
-        t.setdefault("effective_date", triggers_dict.get("effective_date"))
-        t.setdefault("deadline", triggers_dict.get("deadline"))
-        t.setdefault("circular_date", triggers_dict.get("circular_date"))
-
-    print(f"\n[Jargon-Cutter] Circular ID: {circular_id}")
-    print(f"[Jargon-Cutter] Extracted {len(raw_triggers)} impact trigger(s)")
-    print(f"[Jargon-Cutter] Vanilla Summary:\n  {vanilla_summary[:200]}...")
+    print(f"\n[Jargon-Cutter] Circular ID: {analysis.circular_id}")
+    print(f"[Jargon-Cutter] Extracted {len(triggers)} impact trigger(s)")
+    print(f"[Jargon-Cutter] Vanilla Summary:\n  {analysis.vanilla_summary[:200]}...")
 
     return {
-        "vanilla_summary": vanilla_summary,
-        "impact_triggers": raw_triggers,
-        "circular_id": circular_id,
+        "vanilla_summary": analysis.vanilla_summary,
+        "impact_triggers": triggers,
+        "circular_id": analysis.circular_id,
         "processing_errors": errors,
     }

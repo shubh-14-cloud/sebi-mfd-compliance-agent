@@ -132,6 +132,7 @@ def book_auditor_node(state: GraphState) -> dict:
                     "triggers_hit": [],
                     "reasons_for_impact": [],
                     "portfolio_exposure_pct": 0.0,
+                    "_exposed": {},  # internal: holdings from category triggers only (by ISIN)
                     # Populated by benefit_engine
                     "estimated_tax_impact": {},
                     "next_best_action": "",
@@ -143,12 +144,19 @@ def book_auditor_node(state: GraphState) -> dict:
             record["triggers_hit"].append(trigger.get("mandate_id", "?"))
             record["reasons_for_impact"].append(reason)
 
-            # Recompute exposure including new holdings
-            unique_holdings = {h["isin"]: h for h in record["affected_holdings"]}.values()
-            record["affected_holdings"] = list(unique_holdings)
+            # Exposure counts only holdings hit by fund-category triggers; administrative
+            # triggers (nomination / KYC / all) touch the account, not specific funds.
+            if trigger.get("client_filter", {}).get("type") == "category_holding":
+                record["_exposed"].update({h["isin"]: h for h in affected_holdings})
+
+            unique_holdings = {h["isin"]: h for h in record["affected_holdings"]}
+            record["affected_holdings"] = list(unique_holdings.values())
             record["portfolio_exposure_pct"] = _portfolio_exposure_pct(
-                record["affected_holdings"], client["total_portfolio_value"]
+                list(record["_exposed"].values()), client["total_portfolio_value"]
             )
+
+    for record in client_map.values():
+        record.pop("_exposed", None)
 
     affected_clients = list(client_map.values())
 
