@@ -202,9 +202,3 @@ Each client has randomised name, PAN, email, phone, risk profile, tax bracket, K
 | Variable | Required | Description |
 |---|---|---|
 | `GEMINI_API_KEY` | ✅ | Google Gemini API key for LLM inference |
-
----
-
-## License
-
-MIT
