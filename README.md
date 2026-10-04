@@ -103,8 +103,8 @@ sebi-mfd-compliance-agent/
 ### 1. Clone & install dependencies
 
 ```bash
-git clone https://github.com/<your-username>/agentic-regulatory-sentinel.git
-cd agentic-regulatory-sentinel
+git clone https://github.com/shubh-14-cloud/sebi-mfd-compliance-agent.git
+cd sebi-mfd-compliance-agent
 
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
