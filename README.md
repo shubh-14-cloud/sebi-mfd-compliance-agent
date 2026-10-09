@@ -89,7 +89,7 @@ sebi-mfd-compliance-agent/
 | Layer | Technology |
 |---|---|
 | Agent framework | [LangGraph](https://github.com/langchain-ai/langgraph) `>=0.2.0` |
-| LLM | `gemini-2.5-flash` via the `google-genai` SDK (JSON mode) |
+| LLM | Gemini Flash (`gemini-3.8-flash` by default, override with `GEMINI_MODEL`) via the `google-genai` SDK (JSON mode) |
 | State persistence | LangGraph `MemorySaver` (in-memory checkpointer) |
 | Human-in-the-loop | LangGraph `interrupt_before=["human_review"]` |
 | Data validation | Pydantic `>=2.0` (validates Module 1's extracted triggers) |
@@ -201,4 +201,7 @@ Each client has randomised name, PAN, email, phone, risk profile, tax bracket, K
 
 | Variable | Required | Description |
 |---|---|---|
-| `GEMINI_API_KEY` | ✅ | Google Gemini API key for LLM inference |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key for LLM inference |
+| `GEMINI_MODEL` | No | Model name override (default `gemini-3.8-flash`) |
+| `MAX_DRAFT_CLIENTS` | No | Max clients to draft messages for (default `10`, most affected first) |
+| `GEMINI_RPM` | No | Requests/minute your plan allows (default `5`, the free tier) |
