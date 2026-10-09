@@ -25,6 +25,7 @@ You will be given impact triggers extracted from a regulatory circular. For each
    (e.g. fund reclassification that changes the tax treatment of existing holdings).
 2. What the MFD commission/revenue impact is — using ONLY numbers explicitly stated in the circular.
 3. What the correct client action is — specific to THIS trigger's change.
+4. Whether any client actually needs to DO or be told anything (requires_client_action).
 
 STRICT RULES:
 - A TER reduction does NOT cause a tax event. It lowers ongoing costs. Do not invent tax implications.
@@ -34,6 +35,8 @@ STRICT RULES:
 - For commission impact: use ONLY the actual percentages or figures stated in the circular.
   If the circular says "TER reduced from 1.05% to 0.85%", use those numbers.
   If no specific figure is mentioned, say so explicitly — do not estimate or assume.
+- requires_client_action is false when the trigger needs nothing from investors (no deadline, no cost,
+  tax, access or holding change, and no step to take). Never tell a client they are "impacted" if false.
 - client_action must be specific to the regulatory change in this trigger, not generic.
 """
 
@@ -68,7 +71,8 @@ For EACH trigger, return a JSON object with this exact structure:
     "has_commission_impact": true or false,
     "commission_explanation": "Use ONLY numbers from the circular. State the actual change. If no numbers are given, write: 'Circular does not specify exact figures.'",
     "client_action": "Specific 1-2 sentence action for clients impacted by THIS trigger.",
-    "urgency": "LOW, MEDIUM, HIGH, or CRITICAL"
+    "urgency": "LOW, MEDIUM, HIGH, or CRITICAL",
+    "requires_client_action": true or false
   }}
 }}
 
@@ -90,6 +94,7 @@ Return ONLY a valid JSON object."""
                 "commission_explanation": "Analysis failed — manual review required.",
                 "client_action": "Please contact your distributor for guidance on this change.",
                 "urgency": "MEDIUM",
+                "requires_client_action": True,
             }
             for i, t in enumerate(triggers)
         }
@@ -194,7 +199,15 @@ def benefit_engine_node(state: GraphState) -> dict:
     print(f"[Benefit Engine] Tax-relevant triggers   : {tax_triggers if tax_triggers else 'None'}")
     print(f"[Benefit Engine] Commission-relevant     : {comm_triggers if comm_triggers else 'None'}")
 
-    enriched = [_build_client_impact(c, trigger_analysis) for c in clients]
+    # Drop clients whose triggers all say "no client action needed" (default: keep, to be safe)
+    def _needs_action(c: Dict) -> bool:
+        hits = [trigger_analysis[m] for m in c.get("triggers_hit", []) if m in trigger_analysis]
+        return not hits or any(a.get("requires_client_action", True) for a in hits)
+
+    kept = [c for c in clients if _needs_action(c)]
+    if len(kept) < len(clients):
+        print(f"[Benefit Engine] {len(clients) - len(kept)} client(s) dropped: triggers need no client action")
+    enriched = [_build_client_impact(c, trigger_analysis) for c in kept]
     commission_info = _build_commission_summary(trigger_analysis)
 
     print(f"[Benefit Engine] Processed {len(enriched)} client(s)")

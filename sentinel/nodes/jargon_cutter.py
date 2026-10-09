@@ -21,6 +21,7 @@ You are a senior regulatory compliance analyst specialising in Indian mutual fun
 
 Process the regulatory circular and return ONE JSON object with this schema:
 {
+  "relevant_to_mfd_clients": true or false,
   "vanilla_summary": "3-5 plain-English sentences a non-expert MFD can safely forward to clients. No legal jargon. Lead with what is changing and why it matters. Mention the effective date / deadline if present.",
   "circular_id": "string",
   "circular_date": "YYYY-MM-DD or null",
@@ -49,6 +50,12 @@ Allowed values for client_filter.type:
   "all"              — all clients
 
 Rules:
+- relevant_to_mfd_clients: set to false, and return an EMPTY "triggers" list, when the circular does not
+  require any change or action for mutual fund investors or distributors. Examples: enforcement,
+  recovery or remittance orders against a specific company or person, appointments, or notices about
+  unrelated securities. In that case the vanilla_summary should say plainly that no client action is needed.
+- Use client_filter.type "all" ONLY when the rule truly applies to every investor. Never use it as a
+  default when you are unsure.
 - Output ONLY the JSON object.
 - If a date is absent, use null (not empty string).
 - Be exhaustive — extract every distinct regulatory change as a separate trigger.\
@@ -56,7 +63,7 @@ Rules:
 
 
 class ClientFilter(BaseModel):
-    type: Literal["category_holding", "no_nomination", "kyc_pending", "all"] = "all"
+    type: Literal["category_holding", "no_nomination", "kyc_pending", "all"]
     categories: List[str] = Field(default_factory=list)
 
 
@@ -71,6 +78,7 @@ class Trigger(BaseModel):
 
 
 class CircularAnalysis(BaseModel):
+    relevant_to_mfd_clients: bool = True
     vanilla_summary: str
     circular_id: str = "UNKNOWN"
     circular_date: Optional[str] = None
@@ -111,7 +119,9 @@ def jargon_cutter_node(state: GraphState) -> dict:
 
     # Attach top-level dates to each trigger so downstream nodes don't need the parent object
     triggers = []
-    for t in analysis.triggers:
+    if not analysis.relevant_to_mfd_clients:
+        print("[Jargon-Cutter] Circular judged NOT relevant to MFD clients - no triggers created")
+    for t in (analysis.triggers if analysis.relevant_to_mfd_clients else []):
         d = t.model_dump()
         d["effective_date"] = analysis.effective_date
         d["deadline"] = analysis.deadline

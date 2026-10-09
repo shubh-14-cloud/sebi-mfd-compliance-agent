@@ -58,6 +58,11 @@ def _build_reason_for_impact(client: Dict, trigger: Dict, affected_holdings: Lis
     keeps this node fast and deterministic.
     """
     rule = trigger.get("rule_change", "regulatory change")
+    categories = (
+        trigger.get("fund_categories_impacted")
+        or trigger.get("client_filter", {}).get("categories")
+        or []
+    )
     fund_names = [h["fund_name"].split(" - ")[0] for h in affected_holdings[:3]]
     funds_str = ", ".join(fund_names)
     if len(affected_holdings) > 3:
@@ -77,10 +82,13 @@ def _build_reason_for_impact(client: Dict, trigger: Dict, affected_holdings: Lis
             f"be restricted until full KYC verification is done."
         )
 
+    if cf_type == "all" or not categories:
+        return f"This change applies to all investors: {rule}."
+
     return (
         f"You are impacted because {exposure_pct}% of your portfolio (₹"
         f"{sum(h['current_value'] for h in affected_holdings):,.0f}) is invested in "
-        f"{funds_str}, which fall under the '{', '.join(trigger.get('fund_categories_impacted', ['affected']))}' "
+        f"{funds_str}, which fall under the '{', '.join(categories)}' "
         f"category. The new rule: {rule}."
     )
 
@@ -94,7 +102,8 @@ def book_auditor_node(state: GraphState) -> dict:
     errors: List[str] = list(state.get("processing_errors", []))
 
     if not triggers:
-        errors.append("book_auditor: no impact_triggers to process")
+        # Not an error: the circular may simply have no investor impact (see Jargon-Cutter)
+        print("\n[Book Auditor] No impact triggers - nothing to cross-check")
         return {"affected_clients": [], "processing_errors": errors}
 
     # Deduplicate clients across multiple triggers;

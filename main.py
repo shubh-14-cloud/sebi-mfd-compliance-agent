@@ -147,7 +147,10 @@ def display_action_cards(action_cards: list, max_clients: int = 5) -> None:
         print("=" * 70)
         comm = card.get("commission_impact", {})
         print(f"Circular Reference : {card['circular_reference']}")
-        print(f"Clients Affected   : {card['total_clients_affected']}")
+        print(f"Clients Affected   : {card['total_clients_affected']}"
+              + ("  (DEMO — drafts below are samples only)" if card.get("demo") else
+                 f"  (drafts for the {card.get('clients_shown', 0)} most affected)"
+                 if card.get("clients_shown", 0) < card['total_clients_affected'] else ""))
         if comm.get("has_impact"):
             print(f"Commission Impact  : {comm['explanation'][:120]}")
             print(f"  [{comm.get('note', '')[:70]}]")
@@ -207,7 +210,7 @@ def main():
 
     errors = snapshot.get("processing_errors", [])
     if errors:
-        print(f"\n⚠ Processing errors: {errors}")
+        print(f"\nProcessing errors: {errors}")
 
     # ── MFD decision loop: reject → redraft with feedback → review again ──────
     final_state = snapshot
@@ -215,14 +218,14 @@ def main():
         print("\n" + "=" * 70)
         decision = input("[Human Review] Approve and dispatch messages? (y/n): ").strip().lower()
         approved = decision == "y"
-        print(f"  MFD decision: {'✓ APPROVED' if approved else '✗ REVISION NEEDED'}")
+        print(f"  MFD decision: {'APPROVED' if approved else 'REVISION NEEDED'}")
 
         if approved:
             print("\n[Phase 2] Resuming graph with approval...")
             final_state = resume_review(app, config, approved=True)
             cards = final_state.get("action_cards", [])
             total = len(cards[0].get("clients", [])) if cards else 0
-            print(f"\n✓ Pipeline complete. {total} personalised client message(s) approved and ready to dispatch.")
+            print(f"\nPipeline complete. {total} personalised client message(s) approved and ready to dispatch.")
             break
 
         feedback = input("  What should change? (feedback for the redraft): ").strip()

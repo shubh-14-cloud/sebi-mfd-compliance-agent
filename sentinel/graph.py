@@ -136,13 +136,16 @@ def resume_review(
 
     if edited_messages:
         values = app.get_state(config).values
-        clients = [
-            {**c, "personalized_message": edited_messages.get(c["client_id"], c.get("personalized_message", ""))}
-            for c in values.get("affected_clients", [])
+        def _patch(c: dict) -> dict:
+            if c["client_id"] not in edited_messages:
+                return c
+            return {**c, "personalized_message": edited_messages[c["client_id"]]}
+
+        update["action_cards"] = [
+            {**card, "clients": [_patch(c) for c in card.get("clients", [])]}
+            for card in values.get("action_cards", [])
         ]
-        cards = [{**card, "clients": clients} for card in values.get("action_cards", [])]
-        update["affected_clients"] = clients
-        update["action_cards"] = cards
+        update["affected_clients"] = [_patch(c) for c in values.get("affected_clients", [])]
 
     app.update_state(config, update)
     return app.invoke(None, config)
